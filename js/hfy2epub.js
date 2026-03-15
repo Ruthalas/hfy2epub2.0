@@ -174,7 +174,8 @@ function nameFromURL(url)
 // Only works for HFY posts.
 function urlFromName(name)
 {
-    return "https://www.reddit.com/r/HFY/comments/" + name + "/";
+    // return "https://www.reddit.com/r/HFY/comments/" + name + "/";
+    return "https://api.reddit.com/r/HFY/comments/" + name + "/";
 }
 
 // Returns true if the given reddit post name was cached by requestRedditJSON already
@@ -213,35 +214,45 @@ function collectPostContentInComments(post, children, successCallback, errorCall
 
         return authorReplyingToHimself || contentIsKindaLengthy;
     };
-
+	
+	var MAX_COMMENT_DEPTH = 12;
+	
     var collectPostAuthorContentRecurse = function(comments, relativeParentPermalink, depth, contentCallback) {
-        for (var i = 0; i < comments.length; ++i) {
-            if (comments[i].kind == "more" && comments[i].data.id == "_") {
-                console.log("Depth limit exceeded. Need to fetch " + relativeParentPermalink + " to continue.");
-                var parentPermalink = unshorten(relativeParentPermalink);
-                requestRedditJSONCached(parentPermalink, function(json) {
-                    var moreChildren = json[1].data.children[0].data.replies.data.children;
-                    collectPostAuthorContentRecurse(moreChildren, relativeParentPermalink, comments[i].data.depth, contentCallback);
-                }, errorCallback);
-                return;
-            } else {
-                var comment = comments[i].data;
-                if (comment.author == post.author && isContentComment(comment, depth)) {
-                    console.log("Found content in #" + i + " comment " + comment.name + " in depth " + (depth + comment.depth) + " with " + comment.body_html.length + " length.")
-                    var content = he.decode(comment.body_html);
-                    if (comment.replies) {
-                        collectPostAuthorContentRecurse(comment.replies.data.children, comment.permalink, depth, function (additionalContent) {
-                            contentCallback(content + additionalContent);
-                        });
-                    } else {
-                        contentCallback(content);
-                    }
-                    return;
-                }
-            }
-        }
-        contentCallback("");
-    };
+		// Stop is max is exceeded
+		if (depth > MAX_COMMENT_DEPTH) {
+			console.log("Depth limit exceeded at depth " + depth + " for " + relativeParentPermalink);
+			contentCallback("");
+			return;
+		}
+
+		for (var i = 0; i < comments.length; ++i) {
+			var node = comments[i];
+
+			// Safest: don’t chase the “more” object at all (avoids extra recursion entirely)
+			if (node.kind == "more" && node.data.id == "_") {
+				console.log("Skipping deep continuation at " + relativeParentPermalink + " (depth limit reached).");
+				contentCallback("");
+				return;
+			}
+
+			var comment = node.data;
+			if (comment.author == post.author && isContentComment(comment, depth)) {
+				console.log("Found content in #" + i + " comment " + comment.name + " in depth " + (depth + comment.depth) + " with " + comment.body_html.length + " length.");
+				var content = he.decode(comment.body_html);
+
+				if (comment.replies && comment.replies.data && comment.replies.data.children && comment.replies.data.children.length > 0) {
+					collectPostAuthorContentRecurse(comment.replies.data.children, comment.permalink, depth + 1, function(additionalContent) {
+						contentCallback(content + additionalContent);
+					});
+				} else {
+					contentCallback(content);
+				}
+				return;
+			}
+		}
+
+		contentCallback("");
+	};
 
     collectPostAuthorContentRecurse(children, post.permalink, 0, successCallback);
 }
